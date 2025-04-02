@@ -45,7 +45,7 @@ import {
   Lightbulb,
   Wrench,
   Users,
-  Tool,
+  Hammer,
   MoreHorizontal
 } from 'lucide-react';
 import { WarehouseExpense } from '@/types';
@@ -109,7 +109,7 @@ const Expenses = () => {
       case 'staff':
         return <Users className="h-4 w-4 text-green-500" />;
       case 'equipment':
-        return <Tool className="h-4 w-4 text-purple-500" />;
+        return <Hammer className="h-4 w-4 text-purple-500" />;
       default:
         return <Warehouse className="h-4 w-4 text-gray-500" />;
     }
