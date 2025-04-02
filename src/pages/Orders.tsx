@@ -37,24 +37,61 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Label } from '@/components/ui/label';
 import { 
   Plus, 
   MoreHorizontal, 
   Eye, 
   Search, 
   ShoppingBag,
-  CalendarIcon 
+  CalendarIcon,
+  X,
+  Minus, 
 } from 'lucide-react';
-import { Order } from '@/types';
+import { Order, Product } from '@/types';
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
+import { toast } from '@/components/ui/use-toast';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const orderFormSchema = z.object({
+  customerName: z.string().min(1, "Customer name is required"),
+  customerEmail: z.string().email("Invalid email address"),
+  items: z.array(z.object({
+    productId: z.string().min(1, "Product is required"),
+    quantity: z.number().min(1, "Quantity must be at least 1"),
+  })).min(1, "At least one item is required"),
+});
+
+type OrderFormValues = z.infer<typeof orderFormSchema>;
 
 const Orders = () => {
-  const { orders, products, updateOrderStatus } = useData();
+  const { orders, products, addOrder, updateOrderStatus } = useData();
   const [searchQuery, setSearchQuery] = useState('');
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
+  const [orderItems, setOrderItems] = useState<Array<{productId: string; quantity: number}>>([{productId: '', quantity: 1}]);
+  
+  const form = useForm<OrderFormValues>({
+    resolver: zodResolver(orderFormSchema),
+    defaultValues: {
+      customerName: '',
+      customerEmail: '',
+      items: [{ productId: '', quantity: 1 }],
+    },
+  });
   
   // Filter orders based on search query
   const filteredOrders = orders.filter(
@@ -98,6 +135,115 @@ const Orders = () => {
     }
   };
 
+  const availableProducts = products.filter(product => product.quantity > 0);
+
+  const resetNewOrderForm = () => {
+    form.reset({
+      customerName: '',
+      customerEmail: '',
+      items: [{ productId: '', quantity: 1 }],
+    });
+    setOrderItems([{productId: '', quantity: 1}]);
+  };
+
+  const addOrderItem = () => {
+    setOrderItems([...orderItems, {productId: '', quantity: 1}]);
+    form.setValue('items', [...orderItems, {productId: '', quantity: 1}]);
+  };
+
+  const removeOrderItem = (index: number) => {
+    if (orderItems.length === 1) {
+      toast({
+        title: "Cannot Remove",
+        description: "An order must have at least one item.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const newItems = orderItems.filter((_, i) => i !== index);
+    setOrderItems(newItems);
+    form.setValue('items', newItems);
+  };
+
+  const handleProductChange = (value: string, index: number) => {
+    const newItems = [...orderItems];
+    newItems[index].productId = value;
+    setOrderItems(newItems);
+    form.setValue(`items.${index}.productId`, value);
+  };
+
+  const handleQuantityChange = (value: number, index: number) => {
+    const newItems = [...orderItems];
+    newItems[index].quantity = value;
+    setOrderItems(newItems);
+    form.setValue(`items.${index}.quantity`, value);
+  };
+
+  const calculateTotal = () => {
+    let total = 0;
+    orderItems.forEach(item => {
+      const product = products.find(p => p.id === item.productId);
+      if (product && item.quantity > 0) {
+        total += product.price * item.quantity;
+      }
+    });
+    return total;
+  };
+
+  const onSubmitOrder = (values: OrderFormValues) => {
+    // Validate item quantities against available inventory
+    const invalidItems = values.items.filter(item => {
+      const product = products.find(p => p.id === item.productId);
+      return product && item.quantity > product.quantity;
+    });
+
+    if (invalidItems.length > 0) {
+      toast({
+        title: "Inventory Error",
+        description: "Some items exceed available inventory.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Calculate total and prepare items array
+    const orderItemsWithDetails = values.items.map(item => {
+      const product = products.find(p => p.id === item.productId)!;
+      return {
+        id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        orderId: '', // Will be set by addOrder
+        productId: item.productId,
+        productName: product.name,
+        quantity: item.quantity,
+        price: product.price,
+      };
+    });
+
+    const totalAmount = orderItemsWithDetails.reduce(
+      (sum, item) => sum + (item.price * item.quantity), 
+      0
+    );
+
+    // Create a new order
+    addOrder({
+      userId: '1', // Default user ID
+      customerName: values.customerName,
+      customerEmail: values.customerEmail,
+      status: 'pending',
+      totalAmount,
+      items: orderItemsWithDetails,
+    });
+
+    toast({
+      title: "Order Created",
+      description: `Order for ${values.customerName} has been created successfully.`,
+    });
+
+    resetNewOrderForm();
+    setAddDialogOpen(false);
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -109,29 +255,130 @@ const Orders = () => {
             </p>
           </div>
           
-          <Dialog>
+          <Dialog open={addDialogOpen} onOpenChange={(open) => {
+            setAddDialogOpen(open);
+            if (!open) resetNewOrderForm();
+          }}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 New Order
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[625px]">
+            <DialogContent className="sm:max-w-[700px]">
               <DialogHeader>
                 <DialogTitle>Create New Order</DialogTitle>
                 <DialogDescription>
                   Add a new order to the system.
                 </DialogDescription>
               </DialogHeader>
-              <div className="py-4">
-                <p className="text-sm text-muted-foreground">This feature will be implemented in the next version.</p>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="outline">
-                  Cancel
-                </Button>
-                <Button type="button">Create Order</Button>
-              </DialogFooter>
+              
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmitOrder)} className="space-y-6 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="customerName">Customer Name</Label>
+                      <Input
+                        id="customerName"
+                        {...form.register('customerName')}
+                      />
+                      {form.formState.errors.customerName && (
+                        <p className="text-sm text-destructive">{form.formState.errors.customerName.message}</p>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="customerEmail">Customer Email</Label>
+                      <Input
+                        id="customerEmail"
+                        type="email"
+                        {...form.register('customerEmail')}
+                      />
+                      {form.formState.errors.customerEmail && (
+                        <p className="text-sm text-destructive">{form.formState.errors.customerEmail.message}</p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-sm font-medium">Order Items</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={addOrderItem}
+                      >
+                        <Plus className="h-4 w-4 mr-1" /> Add Item
+                      </Button>
+                    </div>
+                    
+                    {orderItems.map((item, index) => (
+                      <div key={index} className="flex space-x-4 items-end">
+                        <div className="flex-1 space-y-2">
+                          <Label>Product</Label>
+                          <Select
+                            value={item.productId}
+                            onValueChange={(value) => handleProductChange(value, index)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select a product" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableProducts.map((product) => (
+                                <SelectItem key={product.id} value={product.id}>
+                                  {product.name} (${product.price.toFixed(2)})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        <div className="w-24 space-y-2">
+                          <Label>Quantity</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={(e) => handleQuantityChange(parseInt(e.target.value) || 1, index)}
+                          />
+                        </div>
+                        
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeOrderItem(index)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    
+                    {form.formState.errors.items && (
+                      <p className="text-sm text-destructive">
+                        {Array.isArray(form.formState.errors.items)
+                          ? "Please check your order items"
+                          : form.formState.errors.items.message}
+                      </p>
+                    )}
+                  </div>
+                  
+                  <div className="border-t pt-4">
+                    <div className="flex justify-between items-center font-medium">
+                      <span>Total Amount:</span>
+                      <span>${calculateTotal().toFixed(2)}</span>
+                    </div>
+                  </div>
+                  
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit">Create Order</Button>
+                  </DialogFooter>
+                </form>
+              </Form>
             </DialogContent>
           </Dialog>
         </div>

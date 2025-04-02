@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useData } from '@/contexts/DataContext';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
@@ -30,23 +30,72 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { 
   Plus, 
   MoreHorizontal, 
   Receipt, 
   Search, 
   CreditCard,
-  CheckCircle
+  CheckCircle 
 } from 'lucide-react';
-import { Payment } from '@/types';
+import { Order, Payment } from '@/types';
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
+import { toast } from '@/components/ui/use-toast';
 
 const Payments = () => {
-  const { payments, orders } = useData();
+  const { payments, orders, addPayment } = useData();
   const [searchQuery, setSearchQuery] = useState('');
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
+  
+  // Form state
+  const [formData, setFormData] = useState({
+    orderId: '',
+    amount: '',
+    method: 'credit_card',
+    transactionId: '',
+  });
+  
+  // Unpaid and partially paid orders
+  const [availableOrders, setAvailableOrders] = useState<Order[]>([]);
+  
+  useEffect(() => {
+    // Filter orders that have no payment or partial payments
+    const paidOrderIds = new Set();
+    const orderTotals = new Map();
+    const orderPayments = new Map<string, number>();
+    
+    // Get all order totals
+    orders.forEach(order => {
+      orderTotals.set(order.id, order.totalAmount);
+    });
+    
+    // Sum up payments by order
+    payments.forEach(payment => {
+      if (payment.status === 'completed') {
+        const currentAmount = orderPayments.get(payment.orderId) || 0;
+        orderPayments.set(payment.orderId, currentAmount + payment.amount);
+      }
+    });
+    
+    // Find orders with no/partial payments
+    const unpaidOrders = orders.filter(order => {
+      const totalPaid = orderPayments.get(order.id) || 0;
+      return totalPaid < order.totalAmount;
+    });
+    
+    setAvailableOrders(unpaidOrders);
+  }, [orders, payments]);
   
   // Filter payments based on search query
   const filteredPayments = payments.filter(
@@ -96,6 +145,99 @@ const Payments = () => {
     return orders.find(o => o.id === payment.orderId);
   };
 
+  const getRemainingBalance = (orderId: string) => {
+    if (!orderId) return 0;
+
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return 0;
+
+    const paid = payments
+      .filter(p => p.orderId === orderId && p.status === 'completed')
+      .reduce((sum, payment) => sum + payment.amount, 0);
+
+    return Math.max(0, order.totalAmount - paid);
+  };
+
+  const resetForm = () => {
+    setFormData({
+      orderId: '',
+      amount: '',
+      method: 'credit_card',
+      transactionId: '',
+    });
+  };
+
+  const handleOrderSelection = (orderId: string) => {
+    setFormData(prev => {
+      const remaining = getRemainingBalance(orderId);
+      return {
+        ...prev,
+        orderId,
+        amount: remaining.toString(),
+      };
+    });
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleAddSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formData.orderId) {
+      toast({
+        title: "Validation Error",
+        description: "Please select an order.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const amount = parseFloat(formData.amount);
+    if (isNaN(amount) || amount <= 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid amount greater than zero.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const remaining = getRemainingBalance(formData.orderId);
+    if (amount > remaining) {
+      toast({
+        title: "Validation Error",
+        description: `Amount exceeds the remaining balance of $${remaining.toFixed(2)}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Create a new payment
+    addPayment({
+      orderId: formData.orderId,
+      amount,
+      method: formData.method as Payment['method'],
+      status: 'completed',
+      transactionId: formData.transactionId || `tr_${Date.now()}`,
+    });
+    
+    toast({
+      title: "Payment Recorded",
+      description: `Payment of $${amount.toFixed(2)} has been recorded.`,
+    });
+    
+    resetForm();
+    setAddDialogOpen(false);
+  };
+
+  const getOrderCustomer = (orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    return order ? order.customerName : 'Unknown';
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -107,29 +249,126 @@ const Payments = () => {
             </p>
           </div>
           
-          <Dialog>
+          <Dialog open={addDialogOpen} onOpenChange={(open) => {
+            setAddDialogOpen(open);
+            if (!open) resetForm();
+          }}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 Record Payment
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[625px]">
-              <DialogHeader>
-                <DialogTitle>Record New Payment</DialogTitle>
-                <DialogDescription>
-                  Add a new payment transaction to the system.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="py-4">
-                <p className="text-sm text-muted-foreground">This feature will be implemented in the next version.</p>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="outline">
-                  Cancel
-                </Button>
-                <Button type="button">Save Payment</Button>
-              </DialogFooter>
+            <DialogContent className="sm:max-w-[550px]">
+              <form onSubmit={handleAddSubmit}>
+                <DialogHeader>
+                  <DialogTitle>Record New Payment</DialogTitle>
+                  <DialogDescription>
+                    Add a new payment transaction to the system.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="order" className="text-right">
+                      Order
+                    </Label>
+                    <div className="col-span-3">
+                      <Select
+                        value={formData.orderId}
+                        onValueChange={handleOrderSelection}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select an order" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableOrders.length > 0 ? (
+                            availableOrders.map((order) => (
+                              <SelectItem key={order.id} value={order.id}>
+                                #{order.id.substring(6)} - {order.customerName}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="none" disabled>
+                              No unpaid orders available
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  
+                  {formData.orderId && (
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <div className="text-right text-sm text-muted-foreground col-span-1">
+                        Order Details
+                      </div>
+                      <div className="col-span-3 text-sm">
+                        <p><span className="font-medium">Customer:</span> {getOrderCustomer(formData.orderId)}</p>
+                        <p><span className="font-medium">Remaining Balance:</span> ${getRemainingBalance(formData.orderId).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="amount" className="text-right">
+                      Amount ($)
+                    </Label>
+                    <Input
+                      id="amount"
+                      name="amount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={formData.amount}
+                      onChange={handleInputChange}
+                      className="col-span-3"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label className="text-right">Payment Method</Label>
+                    <div className="col-span-3">
+                      <Select
+                        value={formData.method}
+                        onValueChange={(value) => 
+                          setFormData((prev) => ({ ...prev, method: value as any }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select payment method" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="credit_card">Credit Card</SelectItem>
+                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="transactionId" className="text-right">
+                      Transaction ID
+                    </Label>
+                    <Input
+                      id="transactionId"
+                      name="transactionId"
+                      value={formData.transactionId}
+                      onChange={handleInputChange}
+                      className="col-span-3"
+                      placeholder="Optional"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit">Record Payment</Button>
+                </DialogFooter>
+              </form>
             </DialogContent>
           </Dialog>
         </div>

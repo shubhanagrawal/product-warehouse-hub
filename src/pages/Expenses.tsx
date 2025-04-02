@@ -51,6 +51,7 @@ import {
 import { WarehouseExpense } from '@/types';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { toast } from '@/components/ui/use-toast';
 
 const Expenses = () => {
   const { expenses, addExpense } = useData();
@@ -88,12 +89,37 @@ const Expenses = () => {
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!formData.description.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a description for the expense.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid amount greater than zero.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     addExpense({
       description: formData.description,
       amount: parseFloat(formData.amount),
       category: formData.category as any,
       date: formData.date,
     });
+    
+    toast({
+      title: "Expense Added",
+      description: "The expense has been successfully recorded.",
+    });
+    
     resetForm();
     setAddDialogOpen(false);
   };
